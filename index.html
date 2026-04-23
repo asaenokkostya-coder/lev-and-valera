@@ -76,9 +76,9 @@
     <p>Убегай от фиолетовой осы! Прыгай через лужи мёда и лови звёзды.</p>
     <div class="legend">
       <div><div class="leg-ico">👆</div>Тап — прыжок</div>
-      <div><div class="leg-ico">🐝</div>Оса гонится</div>
+      <div><div class="leg-ico">👆👆</div>2 тапа — выше</div>
       <div><div class="leg-ico">🟣</div>Прыгай мёд</div>
-      <div><div class="leg-ico">⭐</div>Лови звёзды</div>
+      <div><div class="leg-ico">⭐</div>Серия ×5!</div>
     </div>
     <button id="startBtn">Побежали! 🏃‍♂️</button>
     <p id="hiLabel" class="hi" style="margin-top:12px;margin-bottom:0;font-size:13px;"></p>
@@ -103,6 +103,19 @@
   const SPEED_START = 260;
   const SPEED_MAX = 500;
   const SPEED_ACCEL = 4;
+
+  const BIOMES = [
+    { top: '#7FC7F5', bot: '#CDECFF', ground: '#7DC24C', ground2: '#5FA332', dirt: '#6B4A2B', dirt2: '#8A6A45', cloud: '#FFFFFF', sun: '#FFE985', sunGlow: 'rgba(255, 236, 139, 0.35)' },
+    { top: '#4FB3F0', bot: '#E0F4FF', ground: '#86D255', ground2: '#6AAB3A', dirt: '#6B4A2B', dirt2: '#8A6A45', cloud: '#FFFFFF', sun: '#FFF5A8', sunGlow: 'rgba(255, 245, 168, 0.4)' },
+    { top: '#E06A3C', bot: '#FFC48C', ground: '#8FA84C', ground2: '#6F8032', dirt: '#5A3820', dirt2: '#7A5030', cloud: '#FFD1A8', sun: '#FF9060', sunGlow: 'rgba(255, 160, 100, 0.5)' },
+    { top: '#1E0F4A', bot: '#5A3FA0', ground: '#3F4E2F', ground2: '#2A3820', dirt: '#2A1E10', dirt2: '#4A3820', cloud: '#8B7ABA', sun: '#F0E8FF', sunGlow: 'rgba(240, 232, 255, 0.3)' },
+  ];
+  function getBiome(score) {
+    if (score < 200) return BIOMES[0];
+    if (score < 500) return BIOMES[1];
+    if (score < 900) return BIOMES[2];
+    return BIOMES[3];
+  }
 
   // ==================== DOM / setup ====================
   const canvas = document.getElementById('game');
@@ -175,12 +188,12 @@
   refreshHi();
 
   function resetGame() {
-    player = { x: PLAYER_X, y: GROUND_Y, vy: 0, onGround: true, phase: 0, invuln: 0, hurtFlash: 0 };
+    player = { x: PLAYER_X, y: GROUND_Y, vy: 0, onGround: true, phase: 0, invuln: 0, hurtFlash: 0, canDoubleJump: false, doubleJumped: false };
     valera = { x: VALERA_X, y: GROUND_Y, vy: 0, onGround: true, phase: 0.5 };
     world = {
       speed: SPEED_START,
       scroll: 0,
-      score: 0, distance: 0,
+      score: 0, distance: 0, combo: 0, bestCombo: 0,
       lives: 3,
       time: 0,
       honeys: [], stars: [], particles: [], popups: [],
@@ -207,12 +220,24 @@
     if (e) { e.preventDefault(); }
     initAudio();
     if (state === 'menu' || state === 'gameover') { startGame(); return; }
-    if (state === 'playing' && player.onGround) {
-      player.vy = JUMP_VEL;
-      player.onGround = false;
-      valera.vy = JUMP_VEL * 0.92;
-      valera.onGround = false;
-      sfx.jump();
+    if (state === 'playing') {
+      if (player.onGround) {
+        player.vy = JUMP_VEL;
+        player.onGround = false;
+        player.canDoubleJump = true;
+        player.doubleJumped = false;
+        valera.vy = JUMP_VEL * 0.92;
+        valera.onGround = false;
+        sfx.jump();
+      } else if (player.canDoubleJump) {
+        player.vy = JUMP_VEL * 0.82;
+        player.canDoubleJump = false;
+        player.doubleJumped = true;
+        valera.vy = JUMP_VEL * 0.76;
+        valera.onGround = false;
+        sfx.jump();
+        spawnParticles(player.x, player.y - 20, '#FFD93D', 10);
+      }
     }
   }
   canvas.addEventListener('pointerdown', handleJump);
@@ -235,8 +260,9 @@
     const isNew = world.score > high;
     if (isNew) { high = world.score; saveHigh(high); }
     panel.innerHTML =
-      '<h1>' + (isNew ? '🏆 Новый рекорд! 🏆' : '🐝 Осы настигли! 🐝') + '</h1>' +
+      '<h1>' + (isNew ? '🏆 Новый рекорд! 🏆' : '🐝 Оса догнала! 🐝') + '</h1>' +
       '<p>Молодец, Лев! Ты пробежал <b>' + world.score + '</b> очков.' +
+      (world.bestCombo >= 2 ? '<br>Лучшая серия: <b>' + world.bestCombo + '</b> прыжков подряд!' : '') +
       (isNew ? '<br><span class="hi">Это новый рекорд!</span>' : '<br>Рекорд: <b>' + best + '</b>') + '</p>' +
       '<button id="startBtn">Ещё раз! 🏃‍♂️</button>';
     document.getElementById('startBtn').addEventListener('click', (e) => { e.stopPropagation(); handleJump(e); });
@@ -610,7 +636,11 @@
   // ==================== Spawning ====================
 
   function spawnHoney() {
-    const width = rand(60, 110);
+    const roll = Math.random();
+    let width;
+    if (roll < 0.15) width = rand(150, 200);       // wide — feel bigger
+    else if (roll < 0.5) width = rand(95, 130);    // medium
+    else width = rand(55, 85);                     // narrow
     world.honeys.push({
       x: W + width,
       w: width,
@@ -645,6 +675,7 @@
   function hitPlayer() {
     if (player.invuln > 0) return;
     world.lives -= 1;
+    world.combo = 0;
     player.invuln = 1.4;
     player.hurtFlash = 0.4;
     world.shake = 12;
@@ -700,6 +731,8 @@
         player.vy = 0;
         if (!player.onGround) { sfx.land(); spawnParticles(player.x, GROUND_Y - 2, '#D4A75C', 4); }
         player.onGround = true;
+        player.canDoubleJump = false;
+        player.doubleJumped = false;
       }
     } else {
       player.phase = (player.phase + dt * (world.speed / 60)) % 1;
@@ -728,11 +761,20 @@
 
     for (const h of world.honeys) {
       h.x -= world.speed * dt;
-      if (!h.passed && h.x + h.w < player.x) { h.passed = true; }
+      if (!h.passed && h.x + h.w / 2 < player.x - 10) {
+        h.passed = true;
+        world.combo += 1;
+        if (world.combo > world.bestCombo) world.bestCombo = world.combo;
+        if (world.combo === 3 || world.combo === 6 || world.combo === 10 || world.combo === 15) {
+          const m = world.combo >= 10 ? 5 : world.combo >= 6 ? 3 : 2;
+          addPopup(player.x, player.y - 100, 'СЕРИЯ ×' + m + '!', '#FF8A00');
+          sfx.milestone();
+        }
+      }
       // Honey collision: player feet inside pool AND on ground
       if (player.onGround && player.x > h.x - h.w / 2 + 6 && player.x < h.x + h.w / 2 - 6) {
         hitPlayer();
-        h.x = -999; // remove so not double-hit
+        h.x = -999;
       }
     }
     world.honeys = world.honeys.filter(h => h.x + h.w > -50);
@@ -774,10 +816,11 @@
         const sb = { x: s.x - 16, y: s.y - 16, w: 32, h: 32 };
         if (rectsHit(pb, sb)) {
           s.collected = true;
-          world.distance += 150; // bonus
+          const m = world.combo >= 10 ? 5 : world.combo >= 6 ? 3 : world.combo >= 3 ? 2 : 1;
+          world.distance += 150 * m;
           sfx.star();
           spawnParticles(s.x, s.y, '#FFD93D', 8);
-          addPopup(s.x, s.y - 10, '+15', '#E6B400');
+          addPopup(s.x, s.y - 10, '+' + (15 * m), m > 1 ? '#FF8A00' : '#E6B400');
         }
       } else {
         s.scale -= dt * 3;
@@ -812,17 +855,31 @@
     ctx.save();
     ctx.translate(sx, sy);
 
-    // Sky gradient
+    // Sky gradient (biome-based)
+    const biome = getBiome(world.score);
     const grad = ctx.createLinearGradient(0, 0, 0, GROUND_Y + 20);
-    grad.addColorStop(0, '#7FC7F5');
-    grad.addColorStop(1, '#CDECFF');
+    grad.addColorStop(0, biome.top);
+    grad.addColorStop(1, biome.bot);
     ctx.fillStyle = grad;
     ctx.fillRect(0, 0, W, H);
 
-    // Sun
-    ctx.fillStyle = 'rgba(255, 236, 139, 0.35)';
+    // Stars in night biome
+    if (biome === BIOMES[3]) {
+      ctx.fillStyle = 'white';
+      for (let i = 0; i < 40; i++) {
+        const sx = (i * 71 + 13) % W;
+        const sy = (i * 47 + 29) % (GROUND_Y - 40);
+        const tw = 0.5 + 0.5 * Math.sin(world.time * 2 + i);
+        ctx.globalAlpha = 0.3 + tw * 0.7;
+        ctx.fillRect(sx, sy, 2, 2);
+      }
+      ctx.globalAlpha = 1;
+    }
+
+    // Sun / moon
+    ctx.fillStyle = biome.sunGlow;
     ctx.beginPath(); ctx.arc(W - 90, 80, 56, 0, Math.PI * 2); ctx.fill();
-    ctx.fillStyle = '#FFE985';
+    ctx.fillStyle = biome.sun;
     ctx.beginPath(); ctx.arc(W - 90, 80, 36, 0, Math.PI * 2); ctx.fill();
 
     // Clouds
@@ -831,10 +888,10 @@
     // Hills
     for (const h of world.hills) drawHill(ctx, h.x, h.t);
 
-    // Ground base
-    ctx.fillStyle = '#7DC24C';
+    // Ground base (biome-tinted)
+    ctx.fillStyle = biome.ground;
     ctx.fillRect(0, GROUND_Y, W, H - GROUND_Y);
-    ctx.fillStyle = '#5FA332';
+    ctx.fillStyle = biome.ground2;
     ctx.fillRect(0, GROUND_Y, W, 3);
 
     // Grass tufts
@@ -844,9 +901,9 @@
     }
 
     // Dirt pattern
-    ctx.fillStyle = '#6B4A2B';
+    ctx.fillStyle = biome.dirt;
     ctx.fillRect(0, H - 22, W, 22);
-    ctx.fillStyle = '#8A6A45';
+    ctx.fillStyle = biome.dirt2;
     for (let i = 0; i < 18; i++) {
       const baseX = (i * 70 - world.scroll * 0.9);
       const x = ((baseX % W) + W) % W;
@@ -921,6 +978,25 @@
     ctx.fillStyle = '#222';
     ctx.font = 'bold 22px -apple-system, sans-serif';
     ctx.fillText(String(world.score), 76, 46);
+
+    // Combo counter (center top) — visible when combo >= 2
+    if (world.combo >= 2) {
+      const m = world.combo >= 10 ? 5 : world.combo >= 6 ? 3 : world.combo >= 3 ? 2 : 1;
+      const pulse = 1 + 0.06 * Math.sin(world.time * 8);
+      ctx.save();
+      ctx.translate(W / 2, 36);
+      ctx.scale(pulse, pulse);
+      ctx.fillStyle = m > 1 ? 'rgba(255, 138, 0, 0.95)' : 'rgba(255, 217, 61, 0.95)';
+      roundRect(ctx, -70, -22, 140, 44, 14); ctx.fill();
+      ctx.fillStyle = m > 1 ? 'white' : '#7A4A00';
+      ctx.font = 'bold 11px -apple-system, sans-serif';
+      ctx.textAlign = 'center';
+      ctx.fillText('СЕРИЯ', 0, -4);
+      ctx.fillStyle = m > 1 ? 'white' : '#5C3200';
+      ctx.font = 'bold 20px -apple-system, sans-serif';
+      ctx.fillText(world.combo + (m > 1 ? '  ×' + m : ''), 0, 15);
+      ctx.restore();
+    }
 
     // Lives
     ctx.fillStyle = 'rgba(255, 255, 255, 0.85)';
