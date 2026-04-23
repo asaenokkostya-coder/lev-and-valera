@@ -73,12 +73,12 @@
 <div id="overlay">
   <div class="panel" id="panel">
     <h1>🐝 Лев и Валера 🧸</h1>
-    <p>Убегайте от фиолетовых ос, прыгайте через лужи мёда, собирайте звёзды!</p>
+    <p>Убегай от фиолетовой осы! Прыгай через лужи мёда и лови звёзды.</p>
     <div class="legend">
       <div><div class="leg-ico">👆</div>Тап — прыжок</div>
-      <div><div class="leg-ico">🐝</div>Осы — беда</div>
-      <div><div class="leg-ico">🟣</div>Мёд — утонешь</div>
-      <div><div class="leg-ico">⭐</div>Звёзды — очки</div>
+      <div><div class="leg-ico">🐝</div>Оса гонится</div>
+      <div><div class="leg-ico">🟣</div>Прыгай мёд</div>
+      <div><div class="leg-ico">⭐</div>Лови звёзды</div>
     </div>
     <button id="startBtn">Побежали! 🏃‍♂️</button>
     <p id="hiLabel" class="hi" style="margin-top:12px;margin-bottom:0;font-size:13px;"></p>
@@ -100,9 +100,9 @@
   const VALERA_X = 130;
   const GRAVITY = 2000;
   const JUMP_VEL = -820;
-  const SPEED_START = 300;
-  const SPEED_MAX = 580;
-  const SPEED_ACCEL = 6;
+  const SPEED_START = 260;
+  const SPEED_MAX = 500;
+  const SPEED_ACCEL = 4;
 
   // ==================== DOM / setup ====================
   const canvas = document.getElementById('game');
@@ -183,7 +183,8 @@
       score: 0, distance: 0,
       lives: 3,
       time: 0,
-      honeys: [], wasps: [], stars: [], particles: [], popups: [],
+      honeys: [], stars: [], particles: [], popups: [],
+      chaser: { x: 50, y: GROUND_Y - 90, phase: 0, wing: 0, attacking: false, attackT: 0, defaultX: 50 },
       clouds: [
         { x: 120, y: 70, s: 1.0 },
         { x: 480, y: 40, s: 0.8 },
@@ -193,8 +194,7 @@
         { x: 0, t: 0 }, { x: 500, t: 1 }, { x: 1000, t: 0 },
       ],
       grass: [],
-      spawnHoney: 1.6,
-      spawnWasp: 2.8,
+      spawnHoney: 2.5,
       spawnStar: 1.2,
       lastMilestone: 0,
       shake: 0, flash: 0,
@@ -650,6 +650,9 @@
     world.shake = 12;
     world.flash = 0.3;
     sfx.hurt();
+    sfx.wasp();
+    world.chaser.attacking = true;
+    world.chaser.attackT = 0;
     spawnParticles(player.x, player.y - 30, '#E52B43', 12);
     addPopup(player.x, player.y - 70, '−1', '#E52B43');
     if (world.lives <= 0) gameOver();
@@ -715,11 +718,9 @@
 
     // Spawn
     world.spawnHoney -= dt;
-    world.spawnWasp -= dt;
     world.spawnStar -= dt;
     const spdF = world.speed / SPEED_START;
-    if (world.spawnHoney <= 0) { spawnHoney(); world.spawnHoney = rand(1.3, 2.4) / spdF; }
-    if (world.spawnWasp <= 0)  { spawnWasp();  world.spawnWasp  = rand(2.0, 3.6) / spdF; }
+    if (world.spawnHoney <= 0) { spawnHoney(); world.spawnHoney = rand(2.2, 3.6) / spdF; }
     if (world.spawnStar <= 0)  { spawnStar();  world.spawnStar  = rand(0.9, 1.8); }
 
     // Move obstacles / check collisions
@@ -736,20 +737,35 @@
     }
     world.honeys = world.honeys.filter(h => h.x + h.w > -50);
 
-    for (const w of world.wasps) {
-      w.x -= (world.speed + 40) * dt; // wasps a bit faster
-      w.phase += dt * 2;
-      w.wing += dt * 20;
-      w.y = w.baseY + Math.sin(w.phase) * 8;
-      // Random low buzz sound
-      // Collision
-      const wb = { x: w.x - 16, y: w.y - 14, w: 32, h: 24 };
-      if (rectsHit(pb, wb) && player.invuln <= 0) {
-        hitPlayer();
-        w.x = -999;
+    // Chaser wasp — always on left, dashes in when player is hit
+    const ch = world.chaser;
+    ch.phase += dt * 3;
+    ch.wing += dt * 24;
+    if (ch.attacking) {
+      ch.attackT += dt;
+      const T = ch.attackT;
+      const idleY = GROUND_Y - 90;
+      const targetY = player.y - 50;
+      if (T < 0.3) {
+        const k = T / 0.3;
+        ch.x = ch.defaultX + (player.x - ch.defaultX) * k;
+        ch.y = idleY + (targetY - idleY) * k;
+      } else if (T < 0.5) {
+        ch.x = player.x;
+        ch.y = targetY;
+      } else if (T < 1.1) {
+        const k = (T - 0.5) / 0.6;
+        ch.x = player.x + (ch.defaultX - player.x) * k;
+        ch.y = targetY + (idleY - targetY) * k;
+      } else {
+        ch.attacking = false;
+        ch.x = ch.defaultX;
+        ch.y = idleY;
       }
+    } else {
+      ch.x = ch.defaultX;
+      ch.y = (GROUND_Y - 90) + Math.sin(ch.phase) * 8;
     }
-    world.wasps = world.wasps.filter(w => w.x > -60);
 
     for (const s of world.stars) {
       s.x -= world.speed * dt;
@@ -851,8 +867,14 @@
     drawValera(ctx, valera.x, valera.y, valera.phase, !valera.onGround);
     drawLev(ctx, player.x, player.y, player.phase, !player.onGround, player.invuln);
 
-    // Wasps on top (they fly above)
-    for (const w of world.wasps) drawWasp(ctx, w.x, w.y, w.wing);
+    // Chaser wasp (one persistent pursuer)
+    const chr = world.chaser;
+    const chScale = chr.attacking && chr.attackT > 0.2 && chr.attackT < 0.6 ? 1.35 : 1.05;
+    ctx.save();
+    ctx.translate(chr.x, chr.y);
+    ctx.scale(chScale, chScale);
+    drawWasp(ctx, 0, 0, chr.wing);
+    ctx.restore();
 
     // Particles
     for (const p of world.particles) {
