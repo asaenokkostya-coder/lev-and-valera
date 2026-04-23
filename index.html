@@ -73,11 +73,11 @@
 <div id="overlay">
   <div class="panel" id="panel">
     <h1>🐝 Лев и Валера 🧸</h1>
-    <p>Убегай от фиолетовой осы! Прыгай через лужи мёда и лови звёзды.</p>
+    <p>Убегай от осы! Прыгай мёд, бей пружины, лови радужную звезду!</p>
     <div class="legend">
-      <div><div class="leg-ico">👆</div>Тап — прыжок</div>
-      <div><div class="leg-ico">👆👆</div>2 тапа — выше</div>
-      <div><div class="leg-ico">🟣</div>Прыгай мёд</div>
+      <div><div class="leg-ico">👆👆</div>Двойной прыжок</div>
+      <div><div class="leg-ico">🍄</div>Пружина — БУМ</div>
+      <div><div class="leg-ico">🌈</div>Супер-режим</div>
       <div><div class="leg-ico">⭐</div>Серия ×5!</div>
     </div>
     <button id="startBtn">Побежали! 🏃‍♂️</button>
@@ -171,6 +171,9 @@
     over() { [520, 440, 360, 260].forEach((f, i) => tone(f, 0.26, 'triangle', 0.18, i * 0.16)); },
     start() { tone(440, 0.09, 'triangle', 0.15); tone(660, 0.09, 'triangle', 0.15, 0.08); tone(880, 0.14, 'triangle', 0.16, 0.16); },
     milestone() { tone(700, 0.08, 'square', 0.12); tone(900, 0.08, 'square', 0.12, 0.06); tone(1200, 0.12, 'square', 0.14, 0.12); },
+    spring() { tone(220, 0.18, 'sine', 0.16, 0, 1100); tone(800, 0.09, 'triangle', 0.12, 0.12); },
+    super() { [523, 659, 784, 1047].forEach((f, i) => tone(f, 0.12, 'triangle', 0.18, i * 0.07)); tone(1319, 0.25, 'triangle', 0.2, 0.3); },
+    superStep() { tone(1200 + Math.random() * 200, 0.06, 'sine', 0.08); },
   };
 
   // ==================== Utilities ====================
@@ -188,7 +191,7 @@
   refreshHi();
 
   function resetGame() {
-    player = { x: PLAYER_X, y: GROUND_Y, vy: 0, onGround: true, phase: 0, invuln: 0, hurtFlash: 0, canDoubleJump: false, doubleJumped: false };
+    player = { x: PLAYER_X, y: GROUND_Y, vy: 0, onGround: true, phase: 0, invuln: 0, hurtFlash: 0, canDoubleJump: false, doubleJumped: false, superMode: 0 };
     valera = { x: VALERA_X, y: GROUND_Y, vy: 0, onGround: true, phase: 0.5 };
     world = {
       speed: SPEED_START,
@@ -196,7 +199,7 @@
       score: 0, distance: 0, combo: 0, bestCombo: 0,
       lives: 3,
       time: 0,
-      honeys: [], stars: [], particles: [], popups: [],
+      honeys: [], stars: [], particles: [], popups: [], springs: [], superStars: [],
       chaser: { x: 50, y: GROUND_Y - 90, phase: 0, wing: 0, attacking: false, attackT: 0, defaultX: 50 },
       clouds: [
         { x: 120, y: 70, s: 1.0 },
@@ -209,6 +212,8 @@
       grass: [],
       spawnHoney: 2.5,
       spawnStar: 1.2,
+      spawnSpring: 7.0,
+      spawnSuperStar: 20.0,
       lastMilestone: 0,
       shake: 0, flash: 0,
     };
@@ -229,14 +234,16 @@
         valera.vy = JUMP_VEL * 0.92;
         valera.onGround = false;
         sfx.jump();
-      } else if (player.canDoubleJump) {
+      } else if (player.canDoubleJump || player.superMode > 0) {
         player.vy = JUMP_VEL * 0.82;
-        player.canDoubleJump = false;
-        player.doubleJumped = true;
+        if (player.superMode <= 0) {
+          player.canDoubleJump = false;
+          player.doubleJumped = true;
+        }
         valera.vy = JUMP_VEL * 0.76;
         valera.onGround = false;
         sfx.jump();
-        spawnParticles(player.x, player.y - 20, '#FFD93D', 10);
+        spawnParticles(player.x, player.y - 20, player.superMode > 0 ? '#FF4AA0' : '#FFD93D', 10);
       }
     }
   }
@@ -656,8 +663,117 @@
     });
   }
   function spawnStar() {
-    const y = GROUND_Y - rand(90, 170);
-    world.stars.push({ x: W + 20, y, rot: 0, collected: false, scale: 1 });
+    // Sometimes spawn a trail of stars in an arc (Rayman-style lum chain)
+    if (Math.random() < 0.25) {
+      const baseY = GROUND_Y - rand(110, 160);
+      const n = 4;
+      for (let i = 0; i < n; i++) {
+        const t = i / (n - 1);
+        const arcOff = Math.sin(t * Math.PI) * 50;
+        world.stars.push({ x: W + 20 + i * 46, y: baseY - arcOff, rot: 0, collected: false, scale: 1 });
+      }
+    } else {
+      const y = GROUND_Y - rand(90, 170);
+      world.stars.push({ x: W + 20, y, rot: 0, collected: false, scale: 1 });
+    }
+  }
+
+  function spawnSpring() {
+    world.springs.push({ x: W + 40, w: 40, hit: false, bouncePhase: 0 });
+  }
+
+  function spawnSuperStar() {
+    world.superStars.push({ x: W + 40, y: GROUND_Y - rand(110, 170), rot: 0, phase: 0, collected: false, scale: 1 });
+  }
+
+  function drawSpring(ctx, cx, bouncePhase) {
+    ctx.save();
+    ctx.translate(cx, GROUND_Y);
+    const squish = 1 + bouncePhase * 0.5;
+    const h = 22 / squish;
+    // Base
+    ctx.fillStyle = '#6B4A2B';
+    roundRect(ctx, -16, -3, 32, 6, 2); ctx.fill();
+    // Spring coils
+    ctx.strokeStyle = '#E6B400'; ctx.lineWidth = 2.5;
+    ctx.beginPath();
+    for (let i = 0; i < 4; i++) {
+      const y = -4 - i * (h / 4);
+      ctx.moveTo(-10, y);
+      ctx.lineTo(10, y);
+    }
+    ctx.stroke();
+    // Top plate (red mushroom cap — Mario-style)
+    ctx.fillStyle = '#D9234B';
+    roundRect(ctx, -18, -h - 10, 36, 10, 5); ctx.fill();
+    // White spots on cap
+    ctx.fillStyle = 'white';
+    ctx.beginPath(); ctx.arc(-8, -h - 5, 2.5, 0, Math.PI * 2); ctx.fill();
+    ctx.beginPath(); ctx.arc(8, -h - 5, 2.5, 0, Math.PI * 2); ctx.fill();
+    // Highlight
+    ctx.fillStyle = 'rgba(255,255,255,0.4)';
+    ctx.fillRect(-14, -h - 8, 28, 1.5);
+    ctx.restore();
+  }
+
+  function drawSuperStar(ctx, cx, cy, rot, phase, scale) {
+    ctx.save();
+    ctx.translate(cx, cy);
+    ctx.rotate(rot);
+    ctx.scale(scale, scale);
+    // Rainbow aura
+    for (let i = 0; i < 5; i++) {
+      const hue = (phase * 80 + i * 70) % 360;
+      ctx.fillStyle = 'hsla(' + hue + ', 100%, 65%, 0.15)';
+      ctx.beginPath(); ctx.arc(0, 0, 22 + i * 3, 0, Math.PI * 2); ctx.fill();
+    }
+    // Outer rainbow star
+    for (let layer = 0; layer < 3; layer++) {
+      const hue = (phase * 60 + layer * 120) % 360;
+      ctx.strokeStyle = 'hsl(' + hue + ', 100%, 60%)';
+      ctx.lineWidth = 2.5;
+      ctx.beginPath();
+      for (let i = 0; i < 10; i++) {
+        const r = i % 2 === 0 ? 14 - layer : 7 - layer * 0.4;
+        const a = -Math.PI / 2 + i * Math.PI / 5;
+        const x = Math.cos(a) * r, y = Math.sin(a) * r;
+        if (i === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
+      }
+      ctx.closePath();
+      ctx.stroke();
+    }
+    // White core
+    ctx.fillStyle = 'white';
+    ctx.beginPath();
+    for (let i = 0; i < 10; i++) {
+      const r = i % 2 === 0 ? 10 : 5;
+      const a = -Math.PI / 2 + i * Math.PI / 5;
+      const x = Math.cos(a) * r, y = Math.sin(a) * r;
+      if (i === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
+    }
+    ctx.closePath();
+    ctx.fill();
+    // Happy face
+    ctx.fillStyle = '#2C0810';
+    ctx.beginPath(); ctx.arc(-3, -1, 1, 0, Math.PI * 2); ctx.fill();
+    ctx.beginPath(); ctx.arc(3, -1, 1, 0, Math.PI * 2); ctx.fill();
+    ctx.strokeStyle = '#2C0810'; ctx.lineWidth = 1; ctx.lineCap = 'round';
+    ctx.beginPath(); ctx.moveTo(-2, 2); ctx.quadraticCurveTo(0, 4, 2, 2); ctx.stroke();
+    ctx.restore();
+  }
+
+  function drawSuperAura(ctx, px, py, time) {
+    ctx.save();
+    const hue = (time * 200) % 360;
+    for (let i = 0; i < 6; i++) {
+      const alpha = 0.35 * (1 - i / 6);
+      ctx.strokeStyle = 'hsla(' + ((hue + i * 60) % 360) + ', 100%, 65%, ' + alpha + ')';
+      ctx.lineWidth = 3;
+      ctx.beginPath();
+      ctx.arc(px, py - 35, 28 + i * 4 + Math.sin(time * 6 + i) * 2, 0, Math.PI * 2);
+      ctx.stroke();
+    }
+    ctx.restore();
   }
 
   // ==================== Collisions ====================
@@ -746,15 +862,31 @@
     }
     if (player.invuln > 0) player.invuln -= dt;
     if (player.hurtFlash > 0) player.hurtFlash -= dt;
+    if (player.superMode > 0) {
+      player.superMode -= dt;
+      if (Math.random() < 0.4) {
+        const hue = (world.time * 200 + Math.random() * 60) % 360;
+        world.particles.push({
+          x: player.x + rand(-10, 10), y: player.y - 30 + rand(-20, 10),
+          vx: rand(-40, 40), vy: rand(-80, 0),
+          life: 0.5, t: 0,
+          color: 'hsl(' + hue + ', 100%, 65%)', size: rand(2, 4),
+        });
+      }
+    }
     if (world.shake > 0) world.shake = Math.max(0, world.shake - dt * 40);
     if (world.flash > 0) world.flash = Math.max(0, world.flash - dt * 2);
 
     // Spawn
     world.spawnHoney -= dt;
     world.spawnStar -= dt;
+    world.spawnSpring -= dt;
+    world.spawnSuperStar -= dt;
     const spdF = world.speed / SPEED_START;
     if (world.spawnHoney <= 0) { spawnHoney(); world.spawnHoney = rand(2.2, 3.6) / spdF; }
-    if (world.spawnStar <= 0)  { spawnStar();  world.spawnStar  = rand(0.9, 1.8); }
+    if (world.spawnStar <= 0)  { spawnStar();  world.spawnStar  = rand(1.2, 2.2); }
+    if (world.spawnSpring <= 0) { spawnSpring(); world.spawnSpring = rand(7, 12); }
+    if (world.spawnSuperStar <= 0) { spawnSuperStar(); world.spawnSuperStar = rand(18, 28); }
 
     // Move obstacles / check collisions
     const pb = playerBox();
@@ -773,8 +905,17 @@
       }
       // Honey collision: player feet inside pool AND on ground
       if (player.onGround && player.x > h.x - h.w / 2 + 6 && player.x < h.x + h.w / 2 - 6) {
-        hitPlayer();
-        h.x = -999;
+        if (player.superMode > 0) {
+          // Super mode: splash through honey without damage
+          if (!h.splashed) {
+            h.splashed = true;
+            spawnParticles(player.x, GROUND_Y, '#FF4AA0', 10);
+            sfx.superStep();
+          }
+        } else {
+          hitPlayer();
+          h.x = -999;
+        }
       }
     }
     world.honeys = world.honeys.filter(h => h.x + h.w > -50);
@@ -808,6 +949,55 @@
       ch.x = ch.defaultX;
       ch.y = (GROUND_Y - 90) + Math.sin(ch.phase) * 8;
     }
+
+    // Springs
+    for (const sp of world.springs) {
+      sp.x -= world.speed * dt;
+      if (sp.bouncePhase > 0) sp.bouncePhase = Math.max(0, sp.bouncePhase - dt * 4);
+      if (!sp.hit && player.vy >= -50 && player.y >= GROUND_Y - 12 &&
+          player.x > sp.x - sp.w / 2 && player.x < sp.x + sp.w / 2) {
+        player.vy = JUMP_VEL * 1.65;
+        player.onGround = false;
+        player.canDoubleJump = true;
+        player.doubleJumped = false;
+        valera.vy = JUMP_VEL * 1.45;
+        valera.onGround = false;
+        sp.hit = true;
+        sp.bouncePhase = 1;
+        sfx.spring();
+        spawnParticles(sp.x, GROUND_Y - 10, '#FFD93D', 16);
+        addPopup(sp.x, GROUND_Y - 40, 'БУМ!', '#FF8A00');
+      }
+    }
+    world.springs = world.springs.filter(sp => sp.x + sp.w > -30);
+
+    // Super Stars (rainbow invincibility power-up)
+    for (const ss of world.superStars) {
+      ss.x -= world.speed * dt;
+      ss.rot += dt * 3;
+      ss.phase += dt * 4;
+      if (!ss.collected) {
+        const sb = { x: ss.x - 20, y: ss.y - 20, w: 40, h: 40 };
+        if (rectsHit(pb, sb)) {
+          ss.collected = true;
+          player.superMode = 5.0;
+          sfx.super();
+          addPopup(player.x, player.y - 110, '🌟 СУПЕР! 🌟', '#FF4AA0');
+          for (let i = 0; i < 24; i++) {
+            const hue = (i * 30) % 360;
+            world.particles.push({
+              x: ss.x, y: ss.y,
+              vx: rand(-200, 200), vy: rand(-260, -40),
+              life: rand(0.6, 1.2), t: 0,
+              color: 'hsl(' + hue + ', 100%, 60%)', size: rand(2, 5),
+            });
+          }
+        }
+      } else {
+        ss.scale -= dt * 3;
+      }
+    }
+    world.superStars = world.superStars.filter(ss => ss.x > -40 && ss.scale > 0);
 
     for (const s of world.stars) {
       s.x -= world.speed * dt;
@@ -910,6 +1100,11 @@
       ctx.fillRect(x, H - 18, 10, 3);
     }
 
+    // Springs
+    for (const sp of world.springs) {
+      drawSpring(ctx, sp.x, sp.bouncePhase);
+    }
+
     // Honey pools
     for (const h of world.honeys) {
       drawHoney(ctx, h.x, GROUND_Y + 2, h.w, world.time);
@@ -918,6 +1113,16 @@
     // Stars
     for (const s of world.stars) {
       if (s.scale > 0) drawStar(ctx, s.x, s.y, s.rot, s.scale);
+    }
+
+    // Super stars
+    for (const ss of world.superStars) {
+      if (ss.scale > 0) drawSuperStar(ctx, ss.x, ss.y, ss.rot, ss.phase, ss.scale);
+    }
+
+    // Super mode rainbow aura (behind Lev)
+    if (player.superMode > 0) {
+      drawSuperAura(ctx, player.x, player.y, world.time);
     }
 
     // Characters
